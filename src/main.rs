@@ -7,8 +7,8 @@ mod device;
 mod gopher;
 mod layout;
 
-use glenda::cap::REPLY_SLOT;
 use glenda::cap::{CapPtr, Endpoint};
+use glenda::cap::{RECV_SLOT, REPLY_SLOT};
 use glenda::interface::SystemService;
 use layout::{NET_CAP, TIMER_CAP};
 

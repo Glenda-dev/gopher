@@ -4,8 +4,8 @@ use alloc::collections::BTreeMap;
 use alloc::vec;
 use glenda::cap::RECV_SLOT;
 use glenda::cap::{CapPtr, Endpoint, Reply};
-use glenda::client::device::net::NetClient;
-use glenda::client::device::timer::TimerClient;
+use glenda::client::drivers::net::NetClient;
+use glenda::client::drivers::timer::TimerClient;
 use glenda::error::Error;
 use glenda::interface::{NetDevice, NetworkService, SystemService, TimerDevice};
 use glenda::ipc::server::handle_call;
@@ -24,6 +24,7 @@ pub struct GopherManager<'a> {
 
     endpoint: Endpoint,
     reply: Reply,
+    recv: CapPtr,
     running: bool,
 
     // Map badges to socket handles
@@ -52,6 +53,7 @@ impl<'a> GopherManager<'a> {
             timer,
             endpoint: Endpoint::from(CapPtr::null()),
             reply: Reply::from(CapPtr::null()),
+            recv: CapPtr::null(),
             running: false,
             socket_map: BTreeMap::new(),
         }
@@ -117,9 +119,10 @@ impl<'a> SystemService for GopherManager<'a> {
         Ok(())
     }
 
-    fn listen(&mut self, ep: Endpoint, reply: CapPtr) -> Result<(), Error> {
+    fn listen(&mut self, ep: Endpoint, reply: CapPtr, recv: CapPtr) -> Result<(), Error> {
         self.endpoint = ep;
         self.reply = Reply::from(reply);
+        self.recv = recv;
         Ok(())
     }
 

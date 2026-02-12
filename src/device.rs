@@ -1,5 +1,5 @@
 use glenda::cap::Endpoint;
-use glenda::client::device::net::NetClient;
+use glenda::client::drivers::net::NetClient;
 use glenda::interface::NetDevice;
 use smoltcp::phy;
 use smoltcp::phy::{Device, DeviceCapabilities, Medium};
