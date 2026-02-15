@@ -31,7 +31,7 @@ fn main() -> usize {
 
     let mut manager = GopherManager::new(NET_CAP, TIMER_CAP);
 
-    if let Err(e) = manager.listen(service_ep, REPLY_SLOT) {
+    if let Err(e) = manager.listen(service_ep, REPLY_SLOT, RECV_SLOT) {
         log!("Failed to listen on service endpoint: {:?}", e);
         return 1;
     }
