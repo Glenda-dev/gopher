@@ -1,8 +1,8 @@
 use glenda::cap::{CapPtr, Endpoint, Frame};
 use glenda::error::Error;
-use glenda::protocol::device::net::MacAddress;
 use glenda_drivers::client::net::NetClient;
 use glenda_drivers::interface::NetDriver;
+use glenda_drivers::protocol::net::MacAddress;
 use smoltcp::phy;
 use smoltcp::phy::{Device, DeviceCapabilities, Medium};
 use smoltcp::time::Instant;
@@ -106,10 +106,10 @@ impl Device for GlendaNetDevice {
         Self: 'a;
 
     fn receive(&mut self, _timestamp: Instant) -> Option<(Self::RxToken<'_>, Self::TxToken<'_>)> {
-        // Submit an RX if none is pending
-        if !self.rx_pending {
-            if let Some(shm) = self.client.shm() {
-                // Buffer offset 0 for RX (simplification)
+        // Pre-submit up to 4 RX buffers if they are not already pending
+        if let Some(shm) = self.client.shm() {
+            if !self.rx_pending {
+                // Buffer offset for RX (use first page, 4KB)
                 let slice = unsafe { &mut shm.as_mut_slice()[..2048] };
                 if self.client.submit_recv(slice, self.rx_id).is_ok() {
                     self.rx_pending = true;
@@ -125,6 +125,7 @@ impl Device for GlendaNetDevice {
                     if cqe.res > 0 {
                         let len = cqe.res as usize;
                         let shm_ptr = self.client.shm().unwrap().as_ptr();
+                        // Packets in SHM are zero-copy: they were written by VirtIO DMA
                         let rx = RxToken { shm: shm_ptr, shm_idx: 0, len };
                         let tx = TxToken { client: &mut self.client };
                         return Some((rx, tx));

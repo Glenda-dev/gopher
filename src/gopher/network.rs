@@ -5,6 +5,7 @@ use glenda::interface::{MemoryService, NetworkService, SocketService};
 use glenda::io::uring::{IOURING_OP_READ, IOURING_OP_WRITE};
 use glenda::ipc::Badge;
 use glenda::protocol;
+use glenda::utils::align::align_up;
 use smoltcp::iface::SocketHandle;
 use smoltcp::socket::tcp;
 
@@ -107,12 +108,15 @@ impl<'a, 'b> SocketService for GopherSocket<'a, 'b> {
         frame: Option<Frame>,
     ) -> Result<(), Error> {
         let _handle = self.server.socket_map.get(&self.badge).ok_or(Error::NotFound)?;
-
+        let size_aligned = align_up(size, 4096);
         // In GopherServer, we allocate the server vaddr
-        let addr_server =
-            self.server.next_ring_vaddr.fetch_add(size, core::sync::atomic::Ordering::SeqCst);
+
+        let addr_server = self
+            .server
+            .next_ring_vaddr
+            .fetch_add(size_aligned, core::sync::atomic::Ordering::SeqCst);
         if let Some(f) = frame {
-            self.server.res_client.mmap(Badge::null(), f, addr_server, size)?;
+            self.server.res_client.mmap(Badge::null(), f, addr_server, size_aligned)?;
         }
 
         let ring =

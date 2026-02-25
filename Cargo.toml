@@ -17,3 +17,8 @@ smoltcp = { version = "0.12.0", default-features = false, features = [
     "alloc",
 ] }
 managed = { version = "0.8", default-features = false, features = ["alloc"] }
+serde_json = { version = "1.0", default-features = false, features = ["alloc"] }
+serde = { version = "1.0", default-features = false, features = [
+    "derive",
+    "alloc",
+] }

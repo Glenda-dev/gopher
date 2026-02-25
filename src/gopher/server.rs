@@ -1,28 +1,79 @@
 use super::GopherServer;
 use super::network::GopherSocket;
+use crate::layout::CONFIG_SLOT;
 use glenda::cap::{CapPtr, Endpoint, Reply};
 use glenda::error::Error;
 use glenda::interface::device::DeviceService;
 use glenda::interface::resource::ResourceService;
-use glenda::interface::{InitService, NetworkService, SocketService, SystemService};
+use glenda::interface::{InitService, MemoryService, NetworkService, SocketService, SystemService};
 use glenda::ipc::server::{handle_call, handle_notify};
 use glenda::ipc::{Badge, MsgFlags, MsgTag, UTCB};
 use glenda::protocol;
 use glenda::protocol::device::{HookTarget, LogicDeviceType};
 use glenda::protocol::init::ServiceState;
+use glenda::utils::align::align_up;
 use glenda::utils::manager::CSpaceService;
 
 impl<'a> SystemService for GopherServer<'a> {
     fn init(&mut self) -> Result<(), Error> {
-        // 1. Setup Loopback
+        // 0. Load Network Config (network.json)
+        log!("Loading network.json...");
+        match self.res_client.get_config(Badge::null(), "network.json", CONFIG_SLOT) {
+            Ok((frame, size)) => {
+                let size_aligned = align_up(size, 4096);
+                let addr = self
+                    .next_ring_vaddr
+                    .fetch_add(size_aligned, core::sync::atomic::Ordering::SeqCst);
+                MemoryService::mmap(self.res_client, Badge::null(), frame, addr, size_aligned)?;
+                let data = unsafe { core::slice::from_raw_parts(addr as *const u8, size) };
+                if let Ok(config_str) = core::str::from_utf8(data) {
+                    // Truncate at first null byte if any
+                    let config_str = config_str.split('\0').next().unwrap_or(config_str);
+                    match serde_json::from_str::<super::NetworkConfig>(config_str) {
+                        Ok(config) => {
+                            log!("Network config loaded: buffer_size={}", config.buffer_size);
+                            self.config = Some(config);
+                        }
+                        Err(e) => log!("Failed to parse network.json: {:?}", e),
+                    }
+                }
+                // Cleanup config mapping/frame if needed? (fossil just deletes the slot)
+                let _ = self.cspace.root().delete(CONFIG_SLOT);
+            }
+            Err(_) => {
+                log!("No network.json found or failed to load");
+                let _ = self.cspace.root().delete(CONFIG_SLOT);
+            }
+        }
+
+        // 1. Setup global SHM for network packets
+        let shm_size = self.config.as_ref().map(|c| c.buffer_size).unwrap_or(1024 * 1024);
+        let shm_pages = (shm_size + 4095) / 4096;
+        let shm_size_aligned = shm_pages * 4096;
+
+        let shm_slot = self.cspace.alloc(self.res_client)?;
+        let (shm_paddr, shm_frame) =
+            self.res_client.dma_alloc(Badge::null(), shm_pages, shm_slot)?;
+        let shm_vaddr =
+            self.next_shm_vaddr.fetch_add(shm_size_aligned, core::sync::atomic::Ordering::SeqCst);
+        MemoryService::mmap(
+            self.res_client,
+            Badge::null(),
+            shm_frame.clone(),
+            shm_vaddr,
+            shm_size_aligned,
+        )?;
+        self.shm_frame = Some((shm_frame, shm_vaddr, shm_size_aligned, shm_paddr as usize));
+
+        // 2. Setup Loopback
         self.setup_loopback();
 
-        // 2. Register hook for future net devices
+        // 3. Register hook for future net devices
         log!("Hooked to Unicorn for network devices");
         let target = HookTarget::Type(LogicDeviceType::Net);
         self.device_client.hook(Badge::null(), target, self.endpoint.cap())?;
 
-        // 3. Register Network service
+        // 4. Register Network service
         log!("Registering Network Service...");
         self.res_client
             .register_cap(
@@ -56,8 +107,12 @@ impl<'a> SystemService for GopherServer<'a> {
 
         while self.running {
             // Process any pending device probes or stack maintenance
-            let _ = self.process_pending_probes();
-            let _ = self.poll();
+            if let Err(e) = self.process_pending_probes() {
+                error!("Pending probe error: {:?}", e);
+            }
+            if let Err(e) = self.poll() {
+                error!("Poll error: {:?}", e);
+            }
 
             // Network stack poll
             let mut utcb = unsafe { UTCB::new() };
