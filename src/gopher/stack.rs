@@ -7,6 +7,19 @@ pub enum DeviceVariant {
     Loopback(smoltcp::phy::Loopback),
 }
 
+impl DeviceVariant {
+    pub fn mac_address(&self) -> smoltcp::wire::EthernetAddress {
+        match self {
+            Self::Net(d) => {
+                use glenda_drivers::interface::NetDriver;
+                let mac = d.mac_address();
+                smoltcp::wire::EthernetAddress(mac.octets)
+            }
+            Self::Loopback(_) => smoltcp::wire::EthernetAddress([0, 0, 0, 0, 0, 0]),
+        }
+    }
+}
+
 impl smoltcp::phy::Device for DeviceVariant {
     type RxToken<'ax>
         = RxVariant<'ax>

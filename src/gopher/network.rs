@@ -51,12 +51,12 @@ impl<'a, 'b> SocketService for GopherSocket<'a, 'b> {
     }
 
     fn accept(&mut self) -> Result<usize, Error> {
-        log!("Gopher: accept stub called");
+        log!("Accept stub called");
         Err(Error::NotSupported)
     }
 
     fn connect(&mut self, _address: &[u8]) -> Result<(), Error> {
-        log!("Gopher: connect stub called");
+        log!("Connect stub called");
         Err(Error::NotSupported)
     }
 
@@ -79,7 +79,7 @@ impl<'a, 'b> SocketService for GopherSocket<'a, 'b> {
     }
 
     fn close(&mut self) -> Result<(), Error> {
-        log!("Gopher: close socket for badge {}", self.badge.bits());
+        log!("Close socket for badge {}", self.badge.bits());
         self.server.socket_map.remove(&self.badge);
         Ok(())
     }
@@ -107,21 +107,24 @@ impl<'a, 'b> SocketService for GopherSocket<'a, 'b> {
         frame: Option<Frame>,
     ) -> Result<(), Error> {
         let _handle = self.server.socket_map.get(&self.badge).ok_or(Error::NotFound)?;
-        
+
         // In GopherServer, we allocate the server vaddr
-        let addr_server = self.server.next_ring_vaddr.fetch_add(size, core::sync::atomic::Ordering::SeqCst);
+        let addr_server =
+            self.server.next_ring_vaddr.fetch_add(size, core::sync::atomic::Ordering::SeqCst);
         if let Some(f) = frame {
             self.server.res_client.mmap(Badge::null(), f, addr_server, size)?;
         }
 
-        let ring = unsafe { glenda::io::uring::IoUringBuffer::attach(addr_server as *mut u8, size) };
+        let ring =
+            unsafe { glenda::io::uring::IoUringBuffer::attach(addr_server as *mut u8, size) };
         let uring_server = glenda::io::uring::IoUringServer::new(ring);
         self.server.uring_servers.insert(self.badge, uring_server);
         Ok(())
     }
 
     fn process_iouring(&mut self) -> Result<(), Error> {
-        let mut uring_server = self.server.uring_servers.remove(&self.badge).ok_or(Error::NotFound)?;
+        let mut uring_server =
+            self.server.uring_servers.remove(&self.badge).ok_or(Error::NotFound)?;
 
         while let Some(sqe) = uring_server.next_request() {
             match sqe.opcode {
@@ -139,7 +142,9 @@ impl<'a, 'b> SocketService for GopherSocket<'a, 'b> {
                     }
                 }
                 IOURING_OP_WRITE => {
-                    let buf = unsafe { core::slice::from_raw_parts(sqe.addr as *const u8, sqe.len as usize) };
+                    let buf = unsafe {
+                        core::slice::from_raw_parts(sqe.addr as *const u8, sqe.len as usize)
+                    };
                     match self.send(buf, 0) {
                         Ok(len) => {
                             let _ = uring_server.complete(sqe.user_data, len as i32);

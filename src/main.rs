@@ -12,14 +12,14 @@ mod layout;
 use crate::gopher::GopherServer;
 use crate::layout::{DEVICE_CAP, DEVICE_SLOT, INIT_CAP, INIT_SLOT};
 use glenda::cap::{
-    CSPACE_CAP, CapType, ENDPOINT_CAP, Endpoint, MONITOR_CAP, RECV_SLOT, REPLY_SLOT,
+    CSPACE_CAP, CapType, ENDPOINT_CAP, ENDPOINT_SLOT, MONITOR_CAP, RECV_SLOT, REPLY_SLOT,
 };
 use glenda::client::{DeviceClient, InitClient, ProcessClient, ResourceClient};
 use glenda::interface::SystemService;
 use glenda::interface::resource::ResourceService;
 use glenda::ipc::Badge;
 use glenda::protocol::resource::{DEVICE_ENDPOINT, INIT_ENDPOINT, ResourceType};
-use glenda::utils::manager::{CSpaceManager, CSpaceService};
+use glenda::utils::manager::CSpaceManager;
 
 pub use device::GlendaNetDevice;
 
@@ -45,16 +45,11 @@ fn main() -> usize {
     let mut cspace = CSpaceManager::new(CSPACE_CAP, 16);
 
     // Alloc endpoint for Gopher service
-    let endpoint_slot =
-        cspace.alloc(&mut res_client).expect("Gopher: Failed to alloc endpoint slot");
     res_client
-        .alloc(Badge::null(), CapType::Endpoint, 0, endpoint_slot)
+        .alloc(Badge::null(), CapType::Endpoint, 0, ENDPOINT_SLOT)
         .expect("Gopher: Failed to create endpoint cap");
-    let ep = Endpoint::from(endpoint_slot);
 
-    log!("Starting server loop...");
     let mut server = GopherServer::new(
-        ep,
         &mut res_client,
         &mut process_client,
         &mut cspace,

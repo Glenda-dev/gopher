@@ -1,6 +1,6 @@
 use super::GopherServer;
 use super::network::GopherSocket;
-use glenda::cap::{CapPtr, Endpoint, Reply, Rights};
+use glenda::cap::{CapPtr, Endpoint, Reply};
 use glenda::error::Error;
 use glenda::interface::device::DeviceService;
 use glenda::interface::resource::ResourceService;
@@ -20,10 +20,7 @@ impl<'a> SystemService for GopherServer<'a> {
         // 2. Register hook for future net devices
         log!("Hooked to Unicorn for network devices");
         let target = HookTarget::Type(LogicDeviceType::Net);
-        let hook_badge = Badge::new(0x1337); // Specific badge for hook notifications
-        let hook_slot = self.cspace.alloc(self.res_client)?;
-        self.cspace.root().mint(self.endpoint.cap(), hook_slot, hook_badge, Rights::ALL)?;
-        self.device_client.hook(Badge::null(), target, hook_slot)?;
+        self.device_client.hook(Badge::null(), target, self.endpoint.cap())?;
 
         // 3. Register Network service
         log!("Registering Network Service...");
@@ -37,8 +34,10 @@ impl<'a> SystemService for GopherServer<'a> {
             .ok();
 
         // 4. Initial probe for already existing devices
-        if let Err(e) = self.process_pending_probes() {
-            log!("Initial probe failed: {:?}, non-critical", e);
+        if let Ok(_) = self.sync_devices() {
+            if let Err(e) = self.process_pending_probes() {
+                log!("Initial probe failed: {:?}, non-critical", e);
+            }
         }
 
         Ok(())
@@ -56,6 +55,10 @@ impl<'a> SystemService for GopherServer<'a> {
         self.running = true;
 
         while self.running {
+            // Process any pending device probes or stack maintenance
+            let _ = self.process_pending_probes();
+            let _ = self.poll();
+
             // Network stack poll
             let mut utcb = unsafe { UTCB::new() };
             utcb.clear();
@@ -214,7 +217,7 @@ impl<'a> SystemService for GopherServer<'a> {
 
                     // 1. Check for device synchronization notifications
                     if is_hook {
-                        if let Err(e) = s.process_pending_probes() {
+                        if let Err(e) = s.handle_notify_sync() {
                             error!("Sync failed: {:?}", e);
                         }
                     }
