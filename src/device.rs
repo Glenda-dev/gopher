@@ -1,7 +1,9 @@
-use glenda::cap::{CapPtr, Endpoint, Frame};
+use glenda::cap::Endpoint;
+use glenda::client::ResourceClient;
 use glenda::error::Error;
 use glenda_drivers::client::net::NetClient;
-use glenda_drivers::interface::NetDriver;
+use glenda_drivers::client::{RingParams, ShmParams};
+use glenda_drivers::interface::{DriverClient, NetDriver};
 use glenda_drivers::protocol::net::MacAddress;
 use smoltcp::phy;
 use smoltcp::phy::{Device, DeviceCapabilities, Medium};
@@ -14,10 +16,26 @@ pub struct GlendaNetDevice {
     pub name: alloc::string::String,
 }
 
+impl DriverClient for GlendaNetDevice {
+    fn connect(&mut self) -> Result<(), Error> {
+        self.client.connect()
+    }
+
+    fn disconnect(&mut self) -> Result<(), Error> {
+        self.client.disconnect()
+    }
+}
+
 impl GlendaNetDevice {
-    pub fn new(cap: Endpoint, name: &str) -> Self {
+    pub fn new(
+        cap: Endpoint,
+        name: &str,
+        res: &mut ResourceClient,
+        ring: RingParams,
+        shm: ShmParams,
+    ) -> Self {
         Self {
-            client: NetClient::new(cap),
+            client: NetClient::new(cap, res, ring, shm),
             rx_pending: false,
             rx_id: 0x100,
             name: alloc::string::String::from(name),
@@ -32,26 +50,6 @@ impl GlendaNetDevice {
 impl NetDriver for GlendaNetDevice {
     fn mac_address(&self) -> MacAddress {
         self.client.mac_address()
-    }
-
-    fn setup_ring(
-        &mut self,
-        sq_entries: u32,
-        cq_entries: u32,
-        notify_ep: Endpoint,
-        recv: CapPtr,
-    ) -> Result<Frame, Error> {
-        self.client.setup_ring(sq_entries, cq_entries, notify_ep, recv)
-    }
-
-    fn setup_shm(
-        &mut self,
-        frame: Frame,
-        vaddr: usize,
-        paddr: u64,
-        size: usize,
-    ) -> Result<(), Error> {
-        self.client.setup_shm(frame, vaddr, paddr, size)
     }
 }
 

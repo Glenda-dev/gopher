@@ -11,12 +11,12 @@ use glenda::client::{DeviceClient, InitClient, ResourceClient, TimeClient};
 use glenda::error::Error;
 use glenda::interface::TimeService;
 use glenda::interface::device::DeviceService;
-use glenda::interface::memory::MemoryService;
 use glenda::io::uring::IoUringServer;
 use glenda::ipc::Badge;
 use glenda::protocol::device::LogicDeviceType;
 use glenda::utils::manager::{CSpaceManager, CSpaceService};
-use glenda_drivers::interface::NetDriver;
+use glenda_drivers::client::{RingParams, ShmParams};
+use glenda_drivers::interface::DriverClient;
 use smoltcp::iface::{Config, Interface, SocketHandle, SocketSet};
 use smoltcp::wire::{EthernetAddress, HardwareAddress, IpAddress, IpCidr, Ipv4Address};
 use stack::{DeviceVariant, InterfaceContext};
@@ -106,7 +106,7 @@ impl<'a> GopherServer<'a> {
         let query = glenda::protocol::device::DeviceQuery {
             name: None,
             compatible: alloc::vec![],
-            dev_type: Some(3), // Type 3 = Net
+            dev_type: Some(LogicDeviceType::Net),
         };
         let names = self.device_client.query(Badge::null(), query)?;
         for name in names {
@@ -124,7 +124,12 @@ impl<'a> GopherServer<'a> {
                 if !self.probed_hardware.contains(&hw_id) {
                     log!("Found new network device to probe: {} (hw_id={:x})", name, hw_id);
                     let hw_slot = self.cspace.alloc(self.res_client)?;
-                    let hw_ep = self.device_client.alloc_logic(Badge::null(), 3, &name, hw_slot)?;
+                    let hw_ep = self.device_client.alloc_logic(
+                        Badge::null(),
+                        LogicDeviceType::Net,
+                        &name,
+                        hw_slot,
+                    )?;
                     self.probe(&name, hw_id, desc, hw_ep)?;
                 }
             }
@@ -145,20 +150,36 @@ impl<'a> GopherServer<'a> {
     ) -> Result<(), Error> {
         log!("Probing network device {} (hw_id={:x})", desc.name, hw_id);
 
-        let mut net_device = GlendaNetDevice::new(hardware_ep, &desc.name);
-
-        // Setup IO ring
         let ring_va = self.next_ring_vaddr.fetch_add(PGSIZE, Ordering::SeqCst);
-        let ring_frame = net_device.setup_ring(4, 4, self.endpoint, self.recv)?;
-        MemoryService::mmap(self.res_client, Badge::null(), ring_frame, ring_va, PGSIZE)?;
+        let (shm_frame, shm_va, shm_size, shm_paddr) =
+            self.shm_frame.as_ref().ok_or_else(|| {
+                error!("Global SHM not initialized");
+                Error::NotInitialized
+            })?;
 
-        // Setup SHM from global pool
-        if let Some((shm_frame, shm_va, shm_size, shm_paddr)) = &self.shm_frame {
-            net_device.setup_shm(shm_frame.clone(), *shm_va, *shm_paddr as u64, *shm_size)?;
-        } else {
-            error!("Global SHM not initialized");
-            return Err(Error::NotInitialized);
-        }
+        let net_device = GlendaNetDevice::new(
+            hardware_ep,
+            &desc.name,
+            self.res_client,
+            RingParams {
+                sq_entries: 4,
+                cq_entries: 4,
+                notify_ep: self.endpoint,
+                recv_slot: self.recv,
+                vaddr: ring_va,
+                size: PGSIZE,
+            },
+            ShmParams {
+                frame: *shm_frame,
+                vaddr: *shm_va,
+                paddr: *shm_paddr as u64,
+                size: *shm_size,
+                recv_slot: CapPtr::null(),
+            },
+        );
+
+        let mut net_device = net_device;
+        net_device.connect()?;
         let mut device = DeviceVariant::Net(net_device);
         let mac = device.mac_address();
         let config = Config::new(HardwareAddress::Ethernet(mac));
