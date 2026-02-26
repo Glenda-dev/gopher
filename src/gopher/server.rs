@@ -3,9 +3,10 @@ use super::network::GopherSocket;
 use crate::layout::CONFIG_SLOT;
 use glenda::cap::{CapPtr, Endpoint, Reply};
 use glenda::error::Error;
-use glenda::interface::device::DeviceService;
-use glenda::interface::resource::ResourceService;
-use glenda::interface::{InitService, MemoryService, NetworkService, SocketService, SystemService};
+use glenda::interface::{
+    DeviceService, InitService, MemoryService, NetworkService, ResourceService, SocketService,
+    SystemService,
+};
 use glenda::ipc::server::{handle_call, handle_notify};
 use glenda::ipc::{Badge, MsgFlags, MsgTag, UTCB};
 use glenda::protocol;
@@ -69,7 +70,7 @@ impl<'a> SystemService for GopherServer<'a> {
         self.setup_loopback();
 
         // 3. Register hook for future net devices
-        log!("Hooked to Unicorn for network devices");
+        log!("Hooking to Unicorn for network devices...");
         let target = HookTarget::Type(LogicDeviceType::Net);
         self.device_client.hook(Badge::null(), target, self.endpoint.cap())?;
 
@@ -299,12 +300,9 @@ impl<'a> SystemService for GopherServer<'a> {
 
 impl<'a> GopherServer<'a> {
     pub fn poll(&mut self) -> Result<(), Error> {
-        let timestamp = smoltcp::time::Instant::from_micros(0); // Placeholder timer
+        let timestamp = self.get_time(); // Time Service
         for ctx in &mut self.interfaces {
-            let r = ctx.iface.poll(timestamp, &mut ctx.device, &mut self.sockets);
-            if r == smoltcp::iface::PollResult::SocketStateChanged {
-                log!("Socket state changed");
-            }
+            let _ = ctx.iface.poll(timestamp, &mut ctx.device, &mut self.sockets);
         }
         Ok(())
     }

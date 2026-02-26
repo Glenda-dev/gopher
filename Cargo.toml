@@ -4,10 +4,8 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-glenda-drivers = { path = "../../lib/libglenda_drivers-rs", package = "libglenda_drivers-rs" }
-glenda = { path = "../../lib/libglenda-rs", features = [
-    "rt-service",
-], package = "libglenda-rs" }
+libglenda-rs = { path = "../../lib/libglenda-rs", features = ["rt-service"] }
+libglenda_drivers-rs = { path = "../../lib/libglenda_drivers-rs" }
 smoltcp = { version = "0.12.0", default-features = false, features = [
     "medium-ethernet",
     "proto-ipv4",

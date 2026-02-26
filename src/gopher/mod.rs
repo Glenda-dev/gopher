@@ -7,8 +7,9 @@ use config::*;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use glenda::arch::mem::PGSIZE;
 use glenda::cap::{CapPtr, Endpoint, Reply};
-use glenda::client::{DeviceClient, InitClient, ProcessClient, ResourceClient};
+use glenda::client::{DeviceClient, InitClient, ResourceClient, TimeClient};
 use glenda::error::Error;
+use glenda::interface::TimeService;
 use glenda::interface::device::DeviceService;
 use glenda::interface::memory::MemoryService;
 use glenda::io::uring::IoUringServer;
@@ -27,11 +28,10 @@ pub mod stack;
 
 pub struct GopherServer<'a> {
     pub res_client: &'a mut ResourceClient,
-    pub _process_client: &'a mut ProcessClient,
     pub cspace: &'a mut CSpaceManager,
     pub device_client: &'a mut DeviceClient,
     pub init_client: &'a mut InitClient,
-
+    pub time_client: &'a mut TimeClient,
     pub endpoint: Endpoint,
     pub reply: Reply,
     pub recv: CapPtr,
@@ -55,17 +55,17 @@ pub struct GopherServer<'a> {
 impl<'a> GopherServer<'a> {
     pub fn new(
         res_client: &'a mut ResourceClient,
-        process_client: &'a mut ProcessClient,
         cspace: &'a mut CSpaceManager,
         device_client: &'a mut DeviceClient,
         init_client: &'a mut InitClient,
+        time_client: &'a mut TimeClient,
     ) -> Self {
         Self {
             res_client,
-            _process_client: process_client,
             cspace,
             device_client,
             init_client,
+            time_client,
             endpoint: Endpoint::from(CapPtr::null()),
             reply: Reply::from(CapPtr::null()),
             recv: CapPtr::null(),
@@ -88,12 +88,17 @@ impl<'a> GopherServer<'a> {
             DeviceVariant::Loopback(smoltcp::phy::Loopback::new(smoltcp::phy::Medium::Ethernet));
         let loopback_config =
             Config::new(HardwareAddress::Ethernet(EthernetAddress([0, 0, 0, 0, 0, 0])));
-        let time = smoltcp::time::Instant::from_micros(0);
+        let time = self.get_time();
         let mut loopback_iface = Interface::new(loopback_config, &mut loopback_device, time);
         loopback_iface.update_ip_addrs(|addrs| {
             addrs.push(IpCidr::new(IpAddress::v4(127, 0, 0, 1), 8)).unwrap();
         });
         self.interfaces.push(InterfaceContext { device: loopback_device, iface: loopback_iface });
+    }
+
+    pub fn get_time(&mut self) -> smoltcp::time::Instant {
+        let now_ns = self.time_client.mono_now(Badge::null()).unwrap_or(0);
+        smoltcp::time::Instant::from_micros((now_ns / 1000) as i64)
     }
 
     pub fn sync_devices(&mut self) -> Result<(), Error> {
@@ -157,7 +162,7 @@ impl<'a> GopherServer<'a> {
         let mut device = DeviceVariant::Net(net_device);
         let mac = device.mac_address();
         let config = Config::new(HardwareAddress::Ethernet(mac));
-        let time = smoltcp::time::Instant::from_micros(0);
+        let time = self.get_time();
 
         let mut iface = Interface::new(config, &mut device, time);
         log!("Probed device {} with MAC {}", name, mac);
