@@ -12,4 +12,4 @@ pub const TIME_CAP: Endpoint = Endpoint::from(TIME_SLOT);
 pub const CONFIG_SLOT: CapPtr = CapPtr::from(12);
 
 pub const RING_VA: usize = 0x3000_0000;
-pub const SHM_VA: usize = 0x4000_0000;
+pub const SHM_VA: usize = 0x6000_0000;
