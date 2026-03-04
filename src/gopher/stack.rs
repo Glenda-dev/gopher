@@ -11,7 +11,7 @@ impl DeviceVariant {
     pub fn mac_address(&self) -> smoltcp::wire::EthernetAddress {
         match self {
             Self::Net(d) => {
-                use glenda_drivers::interface::NetDriver;
+                use glenda::drivers::interface::NetDriver;
                 let mac = d.mac_address();
                 smoltcp::wire::EthernetAddress(mac.octets)
             }

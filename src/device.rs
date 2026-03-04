@@ -1,10 +1,10 @@
 use glenda::cap::Endpoint;
 use glenda::client::ResourceClient;
 use glenda::error::Error;
-use glenda_drivers::client::net::NetClient;
-use glenda_drivers::client::{RingParams, ShmParams};
-use glenda_drivers::interface::{DriverClient, NetDriver};
-use glenda_drivers::protocol::net::MacAddress;
+use glenda::drivers::client::net::NetClient;
+use glenda::drivers::client::{RingParams, ShmParams};
+use glenda::drivers::interface::{DriverClient, NetDriver};
+use glenda::drivers::protocol::net::MacAddress;
 use smoltcp::phy;
 use smoltcp::phy::{Device, DeviceCapabilities, Medium};
 use smoltcp::time::Instant;
