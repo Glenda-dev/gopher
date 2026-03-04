@@ -12,14 +12,14 @@ mod layout;
 use crate::gopher::GopherServer;
 use crate::layout::{DEVICE_CAP, DEVICE_SLOT, INIT_CAP, INIT_SLOT, TIME_CAP, TIME_SLOT};
 use glenda::cap::{
-    CSPACE_CAP, CapType, ENDPOINT_CAP, ENDPOINT_SLOT, MONITOR_CAP, RECV_SLOT, REPLY_SLOT,
+    CSPACE_CAP, CapType, ENDPOINT_CAP, ENDPOINT_SLOT, MONITOR_CAP, RECV_SLOT, REPLY_SLOT, VSPACE_CAP,
 };
 use glenda::client::{DeviceClient, InitClient, ResourceClient, TimeClient};
 use glenda::interface::SystemService;
 use glenda::interface::resource::ResourceService;
 use glenda::ipc::Badge;
 use glenda::protocol::resource::{DEVICE_ENDPOINT, INIT_ENDPOINT, ResourceType, TIME_ENDPOINT};
-use glenda::utils::manager::CSpaceManager;
+use glenda::utils::manager::{CSpaceManager, VSpaceManager};
 
 pub use device::GlendaNetDevice;
 
@@ -47,6 +47,7 @@ fn main() -> usize {
     let mut time_client = TimeClient::new(TIME_CAP);
 
     let mut cspace = CSpaceManager::new(CSPACE_CAP, 16);
+    let mut vspace = VSpaceManager::new(VSPACE_CAP, 0x7000_0000, 0x1000_0000);
 
     // Alloc endpoint for Gopher service
     res_client
@@ -56,6 +57,7 @@ fn main() -> usize {
     let mut server = GopherServer::new(
         &mut res_client,
         &mut cspace,
+        &mut vspace,
         &mut dev_client,
         &mut init_client,
         &mut time_client,

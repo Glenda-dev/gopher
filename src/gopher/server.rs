@@ -3,9 +3,9 @@ use super::network::GopherSocket;
 use crate::layout::CONFIG_SLOT;
 use glenda::cap::{CapPtr, Endpoint, Reply};
 use glenda::error::Error;
+use glenda::interface::{CSpaceService, VSpaceService};
 use glenda::interface::{
-    DeviceService, InitService, MemoryService, NetworkService, ResourceService, SocketService,
-    SystemService,
+    DeviceService, InitService, NetworkService, ResourceService, SocketService, SystemService,
 };
 use glenda::ipc::server::{handle_call, handle_notify};
 use glenda::ipc::{Badge, MsgFlags, MsgTag, UTCB};
@@ -13,7 +13,6 @@ use glenda::protocol;
 use glenda::protocol::device::{HookTarget, LogicDeviceType};
 use glenda::protocol::init::ServiceState;
 use glenda::utils::align::align_up;
-use glenda::utils::manager::CSpaceService;
 
 impl<'a> SystemService for GopherServer<'a> {
     fn init(&mut self) -> Result<(), Error> {
@@ -25,7 +24,16 @@ impl<'a> SystemService for GopherServer<'a> {
                 let addr = self
                     .next_ring_vaddr
                     .fetch_add(size_aligned, core::sync::atomic::Ordering::SeqCst);
-                MemoryService::mmap(self.res_client, Badge::null(), frame, addr, size_aligned)?;
+                {
+                    self.vspace.map_frame(
+                        frame,
+                        addr,
+                        glenda::mem::Perms::READ | glenda::mem::Perms::WRITE,
+                        size_aligned / 4096,
+                        self.res_client,
+                        self.cspace,
+                    )?;
+                }
                 let data = unsafe { core::slice::from_raw_parts(addr as *const u8, size) };
                 if let Ok(config_str) = core::str::from_utf8(data) {
                     // Truncate at first null byte if any
@@ -38,12 +46,9 @@ impl<'a> SystemService for GopherServer<'a> {
                         Err(e) => log!("Failed to parse network.json: {:?}", e),
                     }
                 }
-                // Cleanup config mapping/frame if needed? (fossil just deletes the slot)
-                let _ = self.cspace.root().delete(CONFIG_SLOT);
             }
-            Err(_) => {
-                log!("No network.json found or failed to load");
-                let _ = self.cspace.root().delete(CONFIG_SLOT);
+            Err(e) => {
+                warn!("No network.json found or failed to load: {:?}", e);
             }
         }
 
@@ -57,13 +62,16 @@ impl<'a> SystemService for GopherServer<'a> {
             self.res_client.dma_alloc(Badge::null(), shm_pages, shm_slot)?;
         let shm_vaddr =
             self.next_shm_vaddr.fetch_add(shm_size_aligned, core::sync::atomic::Ordering::SeqCst);
-        MemoryService::mmap(
-            self.res_client,
-            Badge::null(),
-            shm_frame.clone(),
-            shm_vaddr,
-            shm_size_aligned,
-        )?;
+        {
+            self.vspace.map_frame(
+                shm_frame.clone(),
+                shm_vaddr,
+                glenda::mem::Perms::READ | glenda::mem::Perms::WRITE,
+                shm_pages,
+                self.res_client,
+                self.cspace,
+            )?;
+        }
         self.shm_frame = Some((shm_frame, shm_vaddr, shm_size_aligned, shm_paddr as usize));
 
         // 2. Setup Loopback

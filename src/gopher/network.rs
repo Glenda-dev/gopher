@@ -1,11 +1,12 @@
 use super::GopherServer;
 use glenda::cap::Frame;
 use glenda::error::Error;
-use glenda::interface::{MemoryService, NetworkService, SocketService};
+use glenda::interface::{NetworkService, SocketService};
 use glenda::io::uring::{IOURING_OP_READ, IOURING_OP_WRITE};
 use glenda::ipc::Badge;
 use glenda::protocol;
 use glenda::utils::align::align_up;
+use glenda::interface::VSpaceService;
 use smoltcp::iface::SocketHandle;
 use smoltcp::socket::tcp;
 
@@ -116,7 +117,14 @@ impl<'a, 'b> SocketService for GopherSocket<'a, 'b> {
             .next_ring_vaddr
             .fetch_add(size_aligned, core::sync::atomic::Ordering::SeqCst);
         if let Some(f) = frame {
-            self.server.res_client.mmap(Badge::null(), f, addr_server, size_aligned)?;
+            self.server.vspace.map_frame(
+                f,
+                addr_server,
+                glenda::mem::Perms::READ | glenda::mem::Perms::WRITE,
+                size_aligned / 4096,
+                self.server.res_client,
+                self.server.cspace,
+            )?;
         }
 
         let ring =

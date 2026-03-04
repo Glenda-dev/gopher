@@ -14,7 +14,8 @@ use glenda::interface::device::DeviceService;
 use glenda::io::uring::IoUringServer;
 use glenda::ipc::Badge;
 use glenda::protocol::device::LogicDeviceType;
-use glenda::utils::manager::{CSpaceManager, CSpaceService};
+use glenda::interface::CSpaceService;
+use glenda::utils::manager::{CSpaceManager, VSpaceManager};
 use glenda_drivers::client::{RingParams, ShmParams};
 use glenda_drivers::interface::DriverClient;
 use smoltcp::iface::{Config, Interface, SocketHandle, SocketSet};
@@ -29,6 +30,7 @@ pub mod stack;
 pub struct GopherServer<'a> {
     pub res_client: &'a mut ResourceClient,
     pub cspace: &'a mut CSpaceManager,
+    pub vspace: &'a mut VSpaceManager,
     pub device_client: &'a mut DeviceClient,
     pub init_client: &'a mut InitClient,
     pub time_client: &'a mut TimeClient,
@@ -56,6 +58,7 @@ impl<'a> GopherServer<'a> {
     pub fn new(
         res_client: &'a mut ResourceClient,
         cspace: &'a mut CSpaceManager,
+        vspace: &'a mut VSpaceManager,
         device_client: &'a mut DeviceClient,
         init_client: &'a mut InitClient,
         time_client: &'a mut TimeClient,
@@ -63,6 +66,7 @@ impl<'a> GopherServer<'a> {
         Self {
             res_client,
             cspace,
+            vspace,
             device_client,
             init_client,
             time_client,
@@ -179,7 +183,7 @@ impl<'a> GopherServer<'a> {
         );
 
         let mut net_device = net_device;
-        net_device.connect()?;
+        net_device.connect(self.vspace, self.cspace)?;
         let mut device = DeviceVariant::Net(net_device);
         let mac = device.mac_address();
         let config = Config::new(HardwareAddress::Ethernet(mac));

@@ -9,6 +9,8 @@ use smoltcp::phy;
 use smoltcp::phy::{Device, DeviceCapabilities, Medium};
 use smoltcp::time::Instant;
 
+use glenda::interface::{CSpaceService, VSpaceService};
+
 pub struct GlendaNetDevice {
     pub client: NetClient,
     pub rx_pending: bool,
@@ -17,8 +19,8 @@ pub struct GlendaNetDevice {
 }
 
 impl DriverClient for GlendaNetDevice {
-    fn connect(&mut self) -> Result<(), Error> {
-        self.client.connect()
+    fn connect(&mut self, vm: &mut dyn VSpaceService, cm: &mut dyn CSpaceService) -> Result<(), Error> {
+        self.client.connect(vm, cm)
     }
 
     fn disconnect(&mut self) -> Result<(), Error> {
