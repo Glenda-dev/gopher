@@ -14,7 +14,7 @@ use glenda::interface::{CSpaceService, VSpaceService};
 pub struct GlendaNetDevice {
     pub client: NetClient,
     pub rx_pending: bool,
-    pub rx_id: u64,
+    pub rx_id: usize,
     pub name: alloc::string::String,
 }
 

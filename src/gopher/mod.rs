@@ -48,7 +48,7 @@ pub struct GopherServer<'a> {
     pub next_shm_vaddr: AtomicUsize,
 
     pub pending_devices: VecDeque<String>,
-    pub probed_hardware: BTreeSet<u64>,
+    pub probed_hardware: BTreeSet<usize>,
 
     pub shm_frame: Option<(glenda::cap::Frame, usize, usize, usize)>, // Frame, vaddr, size, paddr
     pub config: Option<NetworkConfig>,
@@ -148,7 +148,7 @@ impl<'a> GopherServer<'a> {
     pub fn probe(
         &mut self,
         name: &str,
-        hw_id: u64,
+        hw_id: usize,
         desc: glenda::protocol::device::LogicDeviceDesc,
         hardware_ep: Endpoint,
     ) -> Result<(), Error> {
@@ -176,7 +176,7 @@ impl<'a> GopherServer<'a> {
             ShmParams {
                 frame: *shm_frame,
                 vaddr: *shm_va,
-                paddr: *shm_paddr as u64,
+                paddr: *shm_paddr as usize,
                 size: *shm_size,
                 recv_slot: CapPtr::null(),
             },
