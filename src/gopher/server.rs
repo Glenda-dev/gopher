@@ -1,7 +1,7 @@
 use super::GopherServer;
 use super::network::GopherSocket;
 use crate::layout::CONFIG_SLOT;
-use glenda::cap::{CapPtr, Endpoint, Reply};
+use glenda::cap::{CSPACE_CAP, CapPtr, Endpoint, Reply};
 use glenda::error::Error;
 use glenda::interface::{CSpaceService, VSpaceService};
 use glenda::interface::{
@@ -140,6 +140,7 @@ impl<'a> SystemService for GopherServer<'a> {
                 }
                 Err(Error::Success) | Err(Error::WouldBlock) | Err(Error::Timeout) => {
                     // Handled notification, skip reply
+                    let _ = CSPACE_CAP.delete(self.reply.cap());
                 }
                 Err(e) => {
                     let badge = utcb.get_badge();
@@ -253,7 +254,7 @@ impl<'a> SystemService for GopherServer<'a> {
 
                     let frame = if u_inner.get_msg_tag().flags().contains(MsgFlags::HAS_CAP) {
                         let slot = s.cspace.alloc(s.res_client)?;
-                        glenda::cap::CSPACE_CAP.move_cap(glenda::cap::RECV_SLOT, slot)?;
+                        glenda::cap::CSPACE_CAP.transfer_self(glenda::cap::RECV_SLOT, slot)?;
                         Some(glenda::cap::Frame::from(slot))
                     } else {
                         None
