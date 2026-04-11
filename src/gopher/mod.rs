@@ -8,16 +8,16 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 use glenda::arch::mem::PGSIZE;
 use glenda::cap::{CapPtr, Endpoint, Reply};
 use glenda::client::{DeviceClient, InitClient, ResourceClient, TimeClient};
+use glenda::drivers::client::{RingParams, ShmParams};
+use glenda::drivers::interface::DriverClient;
 use glenda::error::Error;
+use glenda::interface::CSpaceService;
 use glenda::interface::TimeService;
 use glenda::interface::device::DeviceService;
 use glenda::io::uring::IoUringServer;
 use glenda::ipc::Badge;
 use glenda::protocol::device::LogicDeviceType;
-use glenda::interface::CSpaceService;
 use glenda::utils::manager::{CSpaceManager, VSpaceManager};
-use glenda::drivers::client::{RingParams, ShmParams};
-use glenda::drivers::interface::DriverClient;
 use smoltcp::iface::{Config, Interface, SocketHandle, SocketSet};
 use smoltcp::wire::{EthernetAddress, HardwareAddress, IpAddress, IpCidr, Ipv4Address};
 use stack::{DeviceVariant, InterfaceContext};
@@ -27,6 +27,13 @@ pub mod network;
 pub mod server;
 pub mod stack;
 
+pub struct GopherIpc {
+    pub endpoint: Endpoint,
+    pub reply: Reply,
+    pub recv: CapPtr,
+    pub running: bool,
+}
+
 pub struct GopherServer<'a> {
     pub res_client: &'a mut ResourceClient,
     pub cspace: &'a mut CSpaceManager,
@@ -34,10 +41,7 @@ pub struct GopherServer<'a> {
     pub device_client: &'a mut DeviceClient,
     pub init_client: &'a mut InitClient,
     pub time_client: &'a mut TimeClient,
-    pub endpoint: Endpoint,
-    pub reply: Reply,
-    pub recv: CapPtr,
-    pub running: bool,
+    pub ipc: GopherIpc,
 
     pub interfaces: Vec<InterfaceContext>,
     pub sockets: SocketSet<'a>,
@@ -70,10 +74,12 @@ impl<'a> GopherServer<'a> {
             device_client,
             init_client,
             time_client,
-            endpoint: Endpoint::from(CapPtr::null()),
-            reply: Reply::from(CapPtr::null()),
-            recv: CapPtr::null(),
-            running: false,
+            ipc: GopherIpc {
+                endpoint: Endpoint::from(CapPtr::null()),
+                reply: Reply::from(CapPtr::null()),
+                recv: CapPtr::null(),
+                running: false,
+            },
             interfaces: Vec::new(),
             sockets: SocketSet::new(Vec::new()),
             socket_map: BTreeMap::new(),
@@ -168,8 +174,8 @@ impl<'a> GopherServer<'a> {
             RingParams {
                 sq_entries: 4,
                 cq_entries: 4,
-                notify_ep: self.endpoint,
-                recv_slot: self.recv,
+                notify_ep: self.ipc.endpoint,
+                recv_slot: self.ipc.recv,
                 vaddr: ring_va,
                 size: PGSIZE,
             },

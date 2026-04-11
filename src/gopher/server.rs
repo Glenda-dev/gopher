@@ -80,7 +80,7 @@ impl<'a> SystemService for GopherServer<'a> {
         // 3. Register hook for future net devices
         log!("Hooking to Unicorn for network devices...");
         let target = HookTarget::Type(LogicDeviceType::Net);
-        self.device_client.hook(Badge::null(), target, self.endpoint.cap())?;
+        self.device_client.hook(Badge::null(), target, self.ipc.endpoint.cap())?;
 
         // 4. Register Network service
         log!("Registering Network Service...");
@@ -89,7 +89,7 @@ impl<'a> SystemService for GopherServer<'a> {
                 Badge::null(),
                 glenda::protocol::resource::ResourceType::Endpoint,
                 glenda::protocol::resource::NET_ENDPOINT,
-                self.endpoint.cap(),
+                self.ipc.endpoint.cap(),
             )
             .ok();
 
@@ -104,17 +104,17 @@ impl<'a> SystemService for GopherServer<'a> {
     }
 
     fn listen(&mut self, ep: Endpoint, reply: CapPtr, recv: CapPtr) -> Result<(), Error> {
-        self.endpoint = ep;
-        self.reply = Reply::from(reply);
-        self.recv = recv;
+        self.ipc.endpoint = ep;
+        self.ipc.reply = Reply::from(reply);
+        self.ipc.recv = recv;
         Ok(())
     }
 
     fn run(&mut self) -> Result<(), Error> {
         self.init_client.report_service(Badge::null(), ServiceState::Running)?;
-        self.running = true;
+        self.ipc.running = true;
 
-        while self.running {
+        while self.ipc.running {
             // Process any pending device probes or stack maintenance
             if let Err(e) = self.process_pending_probes() {
                 error!("Pending probe error: {:?}", e);
@@ -126,10 +126,10 @@ impl<'a> SystemService for GopherServer<'a> {
             // Network stack poll
             let mut utcb = unsafe { UTCB::new() };
             utcb.clear();
-            utcb.set_reply_window(self.reply.cap());
-            utcb.set_recv_window(self.recv);
+            utcb.set_reply_window(self.ipc.reply.cap());
+            utcb.set_recv_window(self.ipc.recv);
 
-            if let Err(e) = self.endpoint.recv(&mut utcb) {
+            if let Err(e) = self.ipc.endpoint.recv(&mut utcb) {
                 error!("Recv error: {:?}", e);
                 continue;
             }
@@ -140,7 +140,7 @@ impl<'a> SystemService for GopherServer<'a> {
                 }
                 Err(Error::Success) | Err(Error::WouldBlock) | Err(Error::Timeout) => {
                     // Handled notification, skip reply
-                    let _ = CSPACE_CAP.delete(self.reply.cap());
+                    let _ = CSPACE_CAP.delete(self.ipc.reply.cap());
                 }
                 Err(e) => {
                     let badge = utcb.get_badge();
@@ -299,11 +299,11 @@ impl<'a> SystemService for GopherServer<'a> {
     }
 
     fn reply(&mut self, utcb: &mut UTCB) -> Result<(), Error> {
-        self.reply.reply(utcb)
+        self.ipc.reply.reply(utcb)
     }
 
     fn stop(&mut self) {
-        self.running = false;
+        self.ipc.running = false;
     }
 }
 
