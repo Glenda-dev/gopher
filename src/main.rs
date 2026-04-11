@@ -12,7 +12,8 @@ mod layout;
 use crate::gopher::GopherServer;
 use crate::layout::{DEVICE_CAP, DEVICE_SLOT, INIT_CAP, INIT_SLOT, TIME_CAP, TIME_SLOT};
 use glenda::cap::{
-    CSPACE_CAP, CapType, ENDPOINT_CAP, ENDPOINT_SLOT, MONITOR_CAP, RECV_SLOT, REPLY_SLOT, VSPACE_CAP,
+    CSPACE_CAP, CapType, ENDPOINT_CAP, ENDPOINT_SLOT, MONITOR_CAP, RECV_SLOT, REPLY_SLOT,
+    VSPACE_CAP,
 };
 use glenda::client::{DeviceClient, InitClient, ResourceClient, TimeClient};
 use glenda::interface::SystemService;
