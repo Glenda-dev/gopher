@@ -77,12 +77,16 @@ impl<'a> SystemService for GopherServer<'a> {
         // 2. Setup Loopback
         self.setup_loopback();
 
-        // 3. Register hook for future net devices
+        // 3. One-shot initial scan/probe for existing devices
+        self.sync_devices()?;
+        self.process_pending_probes()?;
+
+        // 4. Register hook for future net devices
         log!("Hooking to Unicorn for network devices...");
         let target = HookTarget::Type(LogicDeviceType::Net);
         self.device_client.hook(Badge::null(), target, self.ipc.endpoint.cap())?;
 
-        // 4. Register Network service
+        // 5. Register Network service
         log!("Registering Network Service...");
         self.res_client
             .register_cap(
@@ -93,12 +97,7 @@ impl<'a> SystemService for GopherServer<'a> {
             )
             .ok();
 
-        // 4. Initial probe for already existing devices
-        if let Ok(_) = self.sync_devices() {
-            if let Err(e) = self.process_pending_probes() {
-                log!("Initial probe failed: {:?}, non-critical", e);
-            }
-        }
+        self.init_client.report_service(Badge::null(), ServiceState::Running)?;
 
         Ok(())
     }
@@ -111,7 +110,6 @@ impl<'a> SystemService for GopherServer<'a> {
     }
 
     fn run(&mut self) -> Result<(), Error> {
-        self.init_client.report_service(Badge::null(), ServiceState::Running)?;
         self.ipc.running = true;
 
         while self.ipc.running {
