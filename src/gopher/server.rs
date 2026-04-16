@@ -25,7 +25,7 @@ impl<'a> SystemService for GopherServer<'a> {
                     .next_ring_vaddr
                     .fetch_add(size_aligned, core::sync::atomic::Ordering::SeqCst);
                 {
-                    self.vspace.map_frame(
+                    self.vspace.map_page(
                         frame,
                         addr,
                         glenda::mem::Perms::READ | glenda::mem::Perms::WRITE,
@@ -63,7 +63,7 @@ impl<'a> SystemService for GopherServer<'a> {
         let shm_vaddr =
             self.next_shm_vaddr.fetch_add(shm_size_aligned, core::sync::atomic::Ordering::SeqCst);
         {
-            self.vspace.map_frame(
+            self.vspace.map_page(
                 shm_frame.clone(),
                 shm_vaddr,
                 glenda::mem::Perms::READ | glenda::mem::Perms::WRITE,
@@ -253,7 +253,7 @@ impl<'a> SystemService for GopherServer<'a> {
                     let frame = if u_inner.get_msg_tag().flags().contains(MsgFlags::HAS_CAP) {
                         let slot = s.cspace.alloc(s.res_client)?;
                         glenda::cap::CSPACE_CAP.transfer_self(glenda::cap::RECV_SLOT, slot)?;
-                        Some(glenda::cap::Frame::from(slot))
+                        Some(glenda::cap::Page::from(slot))
                     } else {
                         None
                     };

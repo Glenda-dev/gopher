@@ -1,5 +1,5 @@
 use super::GopherServer;
-use glenda::cap::Frame;
+use glenda::cap::Page;
 use glenda::error::Error;
 use glenda::interface::{NetworkService, SocketService};
 use glenda::io::uring::{IOURING_OP_READ, IOURING_OP_WRITE};
@@ -106,7 +106,7 @@ impl<'a, 'b> SocketService for GopherSocket<'a, 'b> {
         &mut self,
         _client_vaddr: usize,
         size: usize,
-        frame: Option<Frame>,
+        frame: Option<Page>,
     ) -> Result<(), Error> {
         let _handle = self.server.socket_map.get(&self.badge).ok_or(Error::NotFound)?;
         let size_aligned = align_up(size, 4096);
@@ -117,7 +117,7 @@ impl<'a, 'b> SocketService for GopherSocket<'a, 'b> {
             .next_ring_vaddr
             .fetch_add(size_aligned, core::sync::atomic::Ordering::SeqCst);
         if let Some(f) = frame {
-            self.server.vspace.map_frame(
+            self.server.vspace.map_page(
                 f,
                 addr_server,
                 glenda::mem::Perms::READ | glenda::mem::Perms::WRITE,

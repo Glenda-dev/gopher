@@ -54,7 +54,7 @@ pub struct GopherServer<'a> {
     pub pending_devices: VecDeque<String>,
     pub probed_hardware: BTreeSet<usize>,
 
-    pub shm_frame: Option<(glenda::cap::Frame, usize, usize, usize)>, // Frame, vaddr, size, paddr
+    pub shm_frame: Option<(glenda::cap::Page, usize, usize, usize)>, // Frame, vaddr, size, paddr
     pub config: Option<NetworkConfig>,
 }
 
