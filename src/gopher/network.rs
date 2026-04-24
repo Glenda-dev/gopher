@@ -1,12 +1,12 @@
 use super::GopherServer;
 use glenda::cap::Page;
 use glenda::error::Error;
+use glenda::interface::VSpaceService;
 use glenda::interface::{NetworkService, SocketService};
 use glenda::io::uring::{IOURING_OP_READ, IOURING_OP_WRITE};
 use glenda::ipc::Badge;
 use glenda::protocol;
 use glenda::utils::align::align_up;
-use glenda::interface::VSpaceService;
 use smoltcp::iface::SocketHandle;
 use smoltcp::socket::tcp;
 

@@ -1,10 +1,10 @@
 use glenda::cap::Endpoint;
 use glenda::client::ResourceClient;
-use glenda::error::Error;
 use glenda::drivers::client::net::NetClient;
 use glenda::drivers::client::{RingParams, ShmParams};
 use glenda::drivers::interface::{DriverClient, NetDriver};
 use glenda::drivers::protocol::net::MacAddress;
+use glenda::error::Error;
 use smoltcp::phy;
 use smoltcp::phy::{Device, DeviceCapabilities, Medium};
 use smoltcp::time::Instant;
@@ -19,7 +19,11 @@ pub struct GlendaNetDevice {
 }
 
 impl DriverClient for GlendaNetDevice {
-    fn connect(&mut self, vm: &mut dyn VSpaceService, cm: &mut dyn CSpaceService) -> Result<(), Error> {
+    fn connect(
+        &mut self,
+        vm: &mut dyn VSpaceService,
+        cm: &mut dyn CSpaceService,
+    ) -> Result<(), Error> {
         self.client.connect(vm, cm)
     }
 
