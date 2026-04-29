@@ -1,4 +1,4 @@
-use super::GopherServer;
+use super::{GopherServer, GopherSocketType, SocketInfo};
 use glenda::cap::Page;
 use glenda::error::Error;
 use glenda::interface::VSpaceService;
@@ -8,7 +8,8 @@ use glenda::ipc::Badge;
 use glenda::protocol;
 use glenda::utils::align::align_up;
 use smoltcp::iface::SocketHandle;
-use smoltcp::socket::tcp;
+use smoltcp::socket::{icmp, tcp};
+use smoltcp::wire::IpAddress;
 
 pub struct GopherSocket<'a, 'b> {
     pub server: &'a mut GopherServer<'b>,
@@ -16,24 +17,52 @@ pub struct GopherSocket<'a, 'b> {
 }
 
 impl<'a, 'b> NetworkService for GopherServer<'a> {
-    fn socket(&mut self, domain: i32, socket_type: i32, _protocol: i32) -> Result<usize, Error> {
+    fn socket(&mut self, domain: i32, socket_type: i32, protocol: i32) -> Result<usize, Error> {
         if domain != protocol::network::AF_INET {
             return Err(Error::InvalidArgs);
         }
 
-        let handle = match socket_type {
+        let (handle, sock_type) = match socket_type {
             protocol::network::SOCK_STREAM => {
                 let rx_buffer = tcp::SocketBuffer::new(alloc::vec![0; 4096]);
                 let tx_buffer = tcp::SocketBuffer::new(alloc::vec![0; 4096]);
                 let socket = tcp::Socket::new(rx_buffer, tx_buffer);
-                self.sockets.add(socket)
+                (self.sockets.add(socket), GopherSocketType::Tcp)
+            }
+            protocol::network::SOCK_RAW => {
+                if protocol == protocol::network::IPPROTO_ICMP {
+                    let rx_buffer = icmp::PacketBuffer::new(
+                        alloc::vec![icmp::PacketMetadata::EMPTY; 8],
+                        alloc::vec![0; 4096],
+                    );
+                    let tx_buffer = icmp::PacketBuffer::new(
+                        alloc::vec![icmp::PacketMetadata::EMPTY; 8],
+                        alloc::vec![0; 4096],
+                    );
+                    let socket = icmp::Socket::new(rx_buffer, tx_buffer);
+                    (self.sockets.add(socket), GopherSocketType::Icmp)
+                } else {
+                    return Err(Error::NotSupported);
+                }
             }
             _ => return Err(Error::NotSupported),
         };
 
-        let id = unsafe { core::mem::transmute_copy::<SocketHandle, usize>(&handle) };
-        let badge = Badge::new(id);
-        self.socket_map.insert(badge, handle);
+        let handle_id = unsafe { core::mem::transmute_copy::<SocketHandle, usize>(&handle) };
+        let caller_pid = self.ipc.recv_badge.bits();
+        // Use a 2-level badge: [socket_id: 48 bits] | [pid: 16 bits]
+        let badge_bits = (handle_id << 16) | (caller_pid & 0xFFFF);
+        let badge = Badge::new(badge_bits);
+        log!(
+            "Creating socket for PID {}, handle_id={}, final_badge={}",
+            caller_pid,
+            handle_id,
+            badge.bits()
+        );
+        self.socket_map.insert(
+            badge,
+            SocketInfo { handle, remote_addr: None, sock_type, pending_reply: None, is_bound: false },
+        );
 
         Ok(badge.bits())
     }
@@ -41,13 +70,13 @@ impl<'a, 'b> NetworkService for GopherServer<'a> {
 
 impl<'a, 'b> SocketService for GopherSocket<'a, 'b> {
     fn bind(&mut self, _address: &[u8]) -> Result<(), Error> {
-        let _handle = self.server.socket_map.get(&self.badge).ok_or(Error::NotFound)?;
+        let _info = self.server.socket_map.get(&self.badge).ok_or(Error::NotFound)?;
         // For now, smoltcp handles this differently or it's a stub
         Ok(())
     }
 
     fn listen(&mut self, _backlog: i32) -> Result<(), Error> {
-        let _handle = self.server.socket_map.get(&self.badge).ok_or(Error::NotFound)?;
+        let _info = self.server.socket_map.get(&self.badge).ok_or(Error::NotFound)?;
         // Implementation logic ...
         Ok(())
     }
@@ -57,27 +86,68 @@ impl<'a, 'b> SocketService for GopherSocket<'a, 'b> {
         Err(Error::NotSupported)
     }
 
-    fn connect(&mut self, _address: &[u8]) -> Result<(), Error> {
-        log!("Connect stub called");
-        Err(Error::NotSupported)
+    fn connect(&mut self, address: &[u8]) -> Result<(), Error> {
+        let info = self.server.socket_map.get_mut(&self.badge).ok_or(Error::NotFound)?;
+        if address.len() < 4 {
+            return Err(Error::InvalidArgs);
+        }
+        let ip = IpAddress::v4(address[0], address[1], address[2], address[3]);
+        info.remote_addr = Some(ip);
+        Ok(())
     }
 
     fn send(&mut self, data: &[u8], _flags: i32) -> Result<usize, Error> {
-        let handle = self.server.socket_map.get(&self.badge).ok_or(Error::NotFound)?;
-        let socket = self.server.sockets.get_mut::<tcp::Socket>(*handle);
-        if !socket.can_send() {
-            return Err(Error::WouldBlock);
+        let info = self.server.socket_map.get_mut(&self.badge).ok_or(Error::NotFound)?;
+        match info.sock_type {
+            GopherSocketType::Tcp => {
+                let socket = self.server.sockets.get_mut::<tcp::Socket>(info.handle);
+                if !socket.can_send() {
+                    return Err(Error::WouldBlock);
+                }
+                socket.send_slice(data).map_err(|_| Error::Generic)
+            }
+            GopherSocketType::Icmp => {
+                let socket = self.server.sockets.get_mut::<icmp::Socket>(info.handle);
+                let remote_addr = info.remote_addr.ok_or(Error::InvalidArgs)?; // Use InvalidArgs as fallback for NotConnected
+                if !socket.can_send() {
+                    return Err(Error::WouldBlock);
+                }
+
+                // Auto-bind the socket to the ICMP ident so smoltcp routes the reply back to it
+                if !info.is_bound && data.len() >= 8 {
+                    // ICMPv4 header is 8 bytes. Ident is at offset 4.
+                    let ident = u16::from_be_bytes([data[4], data[5]]);
+                    let _ = socket.bind(smoltcp::socket::icmp::Endpoint::Ident(ident));
+                    info.is_bound = true;
+                }
+
+                socket.send_slice(data, remote_addr).map_err(|_| Error::Generic)?;
+                Ok(data.len())
+            }
         }
-        socket.send_slice(data).map_err(|_| Error::Generic)
     }
 
     fn recv(&mut self, buffer: &mut [u8], _flags: i32) -> Result<usize, Error> {
-        let handle = self.server.socket_map.get(&self.badge).ok_or(Error::NotFound)?;
-        let socket = self.server.sockets.get_mut::<tcp::Socket>(*handle);
-        if !socket.can_recv() {
-            return Err(Error::WouldBlock);
+        let info = self.server.socket_map.get(&self.badge).ok_or(Error::NotFound)?;
+        match info.sock_type {
+            GopherSocketType::Tcp => {
+                let socket = self.server.sockets.get_mut::<tcp::Socket>(info.handle);
+                if !socket.can_recv() {
+                    return Err(Error::WouldBlock);
+                }
+                socket.recv_slice(buffer).map_err(|_| Error::Generic)
+            }
+            GopherSocketType::Icmp => {
+                debug!("Receiving ICMP packet...");
+                let socket = self.server.sockets.get_mut::<icmp::Socket>(info.handle);
+                if !socket.can_recv() {
+                    warn!("ICMP socket cannot receive right now");
+                    return Err(Error::WouldBlock);
+                }
+                let (len, _remote_addr) = socket.recv_slice(buffer).map_err(|_| Error::Generic)?;
+                Ok(len)
+            }
         }
-        socket.recv_slice(buffer).map_err(|_| Error::Generic)
     }
 
     fn close(&mut self) -> Result<(), Error> {

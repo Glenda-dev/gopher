@@ -1,5 +1,5 @@
-use super::GopherServer;
 use super::network::GopherSocket;
+use super::{GopherServer, GopherSocketType};
 use crate::layout::CONFIG_SLOT;
 use glenda::cap::{CSPACE_CAP, CapPtr, Endpoint, Reply};
 use glenda::error::Error;
@@ -13,6 +13,7 @@ use glenda::protocol;
 use glenda::protocol::device::{HookTarget, LogicDeviceType};
 use glenda::protocol::init::ServiceState;
 use glenda::utils::align::align_up;
+use smoltcp::socket::{icmp, tcp};
 
 impl<'a> SystemService for GopherServer<'a> {
     fn init(&mut self) -> Result<(), Error> {
@@ -85,19 +86,21 @@ impl<'a> SystemService for GopherServer<'a> {
         log!("Hooking to Unicorn for network devices...");
         let target = HookTarget::Type(LogicDeviceType::Net);
         self.device_client.hook(Badge::null(), target, self.ipc.endpoint.cap())?;
+        log!("Hooked to Unicorn.");
 
         // 5. Register Network service
         log!("Registering Network Service...");
-        self.res_client
-            .register_cap(
-                Badge::null(),
-                glenda::protocol::resource::ResourceType::Endpoint,
-                glenda::protocol::resource::NET_ENDPOINT,
-                self.ipc.endpoint.cap(),
-            )
-            .ok();
+        self.res_client.register_cap(
+            Badge::null(),
+            glenda::protocol::resource::ResourceType::Endpoint,
+            glenda::protocol::resource::NET_ENDPOINT,
+            self.ipc.endpoint.cap(),
+        )?;
+        log!("Network Service registered.");
 
+        log!("Reporting service state...");
         self.init_client.report_service(Badge::null(), ServiceState::Running)?;
+        log!("Initialization complete.");
 
         Ok(())
     }
@@ -132,24 +135,28 @@ impl<'a> SystemService for GopherServer<'a> {
                 continue;
             }
 
+            self.ipc.recv_badge = utcb.get_badge();
+
             match self.dispatch(&mut utcb) {
                 Ok(()) => {
                     let _ = self.reply(&mut utcb);
                 }
-                Err(Error::Success) | Err(Error::WouldBlock) | Err(Error::Timeout) => {
+                Err(Error::Success) => {
                     // Handled notification, skip reply
                     let _ = CSPACE_CAP.delete(self.ipc.reply.cap());
                 }
                 Err(e) => {
                     let badge = utcb.get_badge();
                     let tag = utcb.get_msg_tag();
-                    log!(
-                        "Dispatch error: {:?} badge={}, proto={:#x}, label={:#x}",
-                        e,
-                        badge,
-                        tag.proto(),
-                        tag.label()
-                    );
+                    if e != Error::WouldBlock && e != Error::Timeout {
+                        log!(
+                            "Dispatch error: {:?} badge={}, proto={:#x}, label={:#x}",
+                            e,
+                            badge,
+                            tag.proto(),
+                            tag.label()
+                        );
+                    }
                     utcb.set_msg_tag(MsgTag::err());
                     utcb.set_mr(0, e as usize);
                     let _ = self.reply(&mut utcb);
@@ -161,6 +168,13 @@ impl<'a> SystemService for GopherServer<'a> {
 
     fn dispatch(&mut self, utcb: &mut UTCB) -> Result<(), Error> {
         let badge = utcb.get_badge();
+        let tag = utcb.get_msg_tag();
+        log!(
+            "Dispatching proto={:#x}, label={:#x}, badge={}",
+            tag.proto(),
+            tag.label(),
+            badge.bits()
+        );
 
         glenda::ipc_dispatch! {
             self, utcb,
@@ -194,6 +208,7 @@ impl<'a> SystemService for GopherServer<'a> {
             (protocol::NETWORK_PROTO, protocol::network::CONNECT) => |s: &mut Self, u: &mut UTCB| {
                 let res = {
                     let addr = u.buffer();
+                    log!("CONNECT addr len={}", addr.len());
                     let mut socket = GopherSocket { server: s, badge };
                     socket.connect(addr)
                 };
@@ -241,6 +256,15 @@ impl<'a> SystemService for GopherServer<'a> {
                         u.set_size(len);
                         u.set_msg_tag(MsgTag::ok());
                         Ok(())
+                    }
+                    Err(Error::WouldBlock) => {
+                        // Persist reply cap for deferred wake-up
+                        let slot = s.cspace.alloc(s.res_client)?;
+                        glenda::cap::CSPACE_CAP.transfer_self(s.ipc.reply.cap(), slot)?;
+                        let info = s.socket_map.get_mut(&badge).ok_or(Error::NotFound)?;
+                        info.pending_reply = Some(slot);
+                        //instruct main loop to skip immediate reply
+                        Err(Error::Success)
                     }
                     Err(e) => Err(e),
                 }
@@ -306,11 +330,55 @@ impl<'a> SystemService for GopherServer<'a> {
 }
 
 impl<'a> GopherServer<'a> {
-    pub fn poll(&mut self) -> Result<(), Error> {
+    fn poll(&mut self) -> Result<(), Error> {
         let timestamp = self.get_time(); // Time Service
         for ctx in &mut self.interfaces {
             let _ = ctx.iface.poll(timestamp, &mut ctx.device, &mut self.sockets);
         }
+
+        // Process deferred wake-ups
+        let mut to_wakeup = alloc::vec::Vec::new();
+        for (badge, info) in &self.socket_map {
+            if let Some(slot) = info.pending_reply {
+                let can_recv = match info.sock_type {
+                    GopherSocketType::Tcp => {
+                        let s = self.sockets.get::<tcp::Socket>(info.handle);
+                        s.can_recv()
+                    }
+                    GopherSocketType::Icmp => {
+                        let s = self.sockets.get::<icmp::Socket>(info.handle);
+                        s.can_recv()
+                    }
+                };
+                if can_recv {
+                    to_wakeup.push((*badge, slot));
+                }
+            }
+        }
+
+        for (badge, slot) in to_wakeup {
+            let mut buf = [0u8; 2048];
+            let mut socket = GopherSocket { server: self, badge };
+            if let Ok(len) = socket.recv(&mut buf, 0) {
+                let mut utcb = unsafe { UTCB::new() };
+                utcb.clear();
+                utcb.buffer_mut()[..len].copy_from_slice(&buf[..len]);
+                utcb.set_size(len);
+                utcb.set_msg_tag(MsgTag::ok());
+
+                let reply_cap = glenda::cap::Reply::from(slot);
+                if let Err(e) = reply_cap.reply(&mut utcb) {
+                    error!("Deferred reply error: {:?}", e);
+                }
+                // Cleanup
+                let _ = glenda::cap::CSPACE_CAP.delete(slot);
+                self.cspace.free(slot);
+                if let Some(info) = self.socket_map.get_mut(&badge) {
+                    info.pending_reply = None;
+                }
+            }
+        }
+
         Ok(())
     }
 }

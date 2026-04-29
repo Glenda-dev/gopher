@@ -27,10 +27,25 @@ pub mod network;
 pub mod server;
 pub mod stack;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GopherSocketType {
+    Tcp,
+    Icmp,
+}
+
+pub struct SocketInfo {
+    pub handle: SocketHandle,
+    pub remote_addr: Option<IpAddress>,
+    pub sock_type: GopherSocketType,
+    pub pending_reply: Option<glenda::cap::CapPtr>,
+    pub is_bound: bool,
+}
+
 pub struct GopherIpc {
     pub endpoint: Endpoint,
     pub reply: Reply,
     pub recv: CapPtr,
+    pub recv_badge: Badge,
     pub running: bool,
 }
 
@@ -45,7 +60,7 @@ pub struct GopherServer<'a> {
 
     pub interfaces: Vec<InterfaceContext>,
     pub sockets: SocketSet<'a>,
-    pub socket_map: BTreeMap<Badge, SocketHandle>,
+    pub socket_map: BTreeMap<Badge, SocketInfo>,
     pub uring_servers: BTreeMap<Badge, IoUringServer>,
 
     pub next_ring_vaddr: AtomicUsize,
@@ -78,6 +93,7 @@ impl<'a> GopherServer<'a> {
                 endpoint: Endpoint::from(CapPtr::null()),
                 reply: Reply::from(CapPtr::null()),
                 recv: CapPtr::null(),
+                recv_badge: Badge::null(),
                 running: false,
             },
             interfaces: Vec::new(),
@@ -194,7 +210,6 @@ impl<'a> GopherServer<'a> {
         let mac = device.mac_address();
         let config = Config::new(HardwareAddress::Ethernet(mac));
         let time = self.get_time();
-
         let mut iface = Interface::new(config, &mut device, time);
         log!("Probed device {} with MAC {}", name, mac);
         // Apply configuration from network.json if available
