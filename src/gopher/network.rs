@@ -61,7 +61,13 @@ impl<'a, 'b> NetworkService for GopherServer<'a> {
         );
         self.socket_map.insert(
             badge,
-            SocketInfo { handle, remote_addr: None, sock_type, pending_reply: None, is_bound: false },
+            SocketInfo {
+                handle,
+                remote_addr: None,
+                sock_type,
+                pending_reply: None,
+                is_bound: false,
+            },
         );
 
         Ok(badge.bits())
